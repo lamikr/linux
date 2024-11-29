@@ -1159,6 +1159,12 @@ static int evict_process_queues_cpsch(struct device_queue_manager *dqm,
 	// gfx1103 APU fails to remove the queue usually after 10-50 attempts
 	if (dqm->dev->adev->flags & AMD_IS_APU)
 		goto out;
+	if ((dqm->dev->adev->asic_type == CHIP_NAVI10) ||
+	    (dqm->dev->adev->asic_type == CHIP_NAVI12) ||
+	    (dqm->dev->adev->asic_type == CHIP_NAVI14)) {
+		//pr_info("evict_process_queues_cpsch NAVI1X\n");
+		goto out;
+	}
 	dqm_lock(dqm);
 	if (qpd->evicted++ > 0) /* already evicted, do nothing */
 		goto out_unlock;
@@ -1302,6 +1308,12 @@ static int restore_process_queues_cpsch(struct device_queue_manager *dqm,
 	// gfx1103 APU fails to remove the queue usually after 10-50 attempts
 	if (dqm->dev->adev->flags & AMD_IS_APU)
 		goto out;
+	if ((dqm->dev->adev->asic_type == CHIP_NAVI10) ||
+            (dqm->dev->adev->asic_type == CHIP_NAVI12) ||
+            (dqm->dev->adev->asic_type == CHIP_NAVI14)) {
+                //pr_info("restore_process_queues_cpsch NAVI1X\n");
+                goto out;
+        }
 	pdd = qpd_to_pdd(qpd);
 
 	dqm_lock(dqm);
