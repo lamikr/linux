@@ -3990,11 +3990,21 @@ static void amdgpu_device_set_mcbp(struct amdgpu_device *adev)
 	else if (amdgpu_mcbp == 0)
 		adev->gfx.mcbp = false;
 
-	if (amdgpu_sriov_vf(adev))
+	if (amdgpu_sriov_vf(adev)) {
+		DRM_INFO("MCBP, sriov_vf true\n");
 		adev->gfx.mcbp = true;
+	}
+
+	if ((amdgpu_ip_version(adev, GC_HWIP, 0) >= IP_VERSION(9, 0, 0)) &&
+		 (amdgpu_ip_version(adev, GC_HWIP, 0) < IP_VERSION(10, 0, 0))) {
+		DRM_INFO("MCBP, old state: %d, new_state: 0\n", adev->gfx.mcbp);
+		adev->gfx.mcbp = false;
+	}
 
 	if (adev->gfx.mcbp)
 		DRM_INFO("MCBP is enabled\n");
+	else
+		DRM_INFO("MCBP is disabled\n");
 }
 
 /**

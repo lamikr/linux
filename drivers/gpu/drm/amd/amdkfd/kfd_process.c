@@ -1856,7 +1856,7 @@ struct kfd_process *kfd_lookup_process_by_mm(const struct mm_struct *mm)
  * Eviction is reference-counted per process-device. This means multiple
  * evictions from different sources can be nested safely.
  */
-int kfd_process_evict_queues(struct kfd_process *p, uint32_t trigger)
+int kfd_process_evict_queues(struct kfd_process *p, uint32_t trigger, char *caller)
 {
 	int r = 0;
 	int i;
@@ -1876,7 +1876,7 @@ int kfd_process_evict_queues(struct kfd_process *p, uint32_t trigger)
 		 * them been add back since they actually not be saved right now.
 		 */
 		if (r && r != -EIO) {
-			dev_err(dev, "Failed to evict process queues\n");
+			dev_err(dev, "Failed to evict process queue %d, caller: %s\n", i, caller);
 			goto fail;
 		}
 		n_evicted++;
@@ -1989,7 +1989,7 @@ static void evict_process_worker(struct work_struct *work)
 	p = container_of(dwork, struct kfd_process, eviction_work);
 
 	pr_debug("Started evicting pasid 0x%x\n", p->pasid);
-	ret = kfd_process_evict_queues(p, KFD_QUEUE_EVICTION_TRIGGER_TTM);
+	ret = kfd_process_evict_queues(p, KFD_QUEUE_EVICTION_TRIGGER_TTM, "evict_process_worker");
 	if (!ret) {
 		/* If another thread already signaled the eviction fence,
 		 * they are responsible stopping the queues and scheduling
@@ -2000,9 +2000,9 @@ static void evict_process_worker(struct work_struct *work)
 				     msecs_to_jiffies(PROCESS_RESTORE_TIME_MS)))
 			kfd_process_restore_queues(p);
 
-		pr_debug("Finished evicting pasid 0x%x\n", p->pasid);
+		pr_info("evict_process_worker Finished evicting pasid 0x%x\n", p->pasid);
 	} else
-		pr_err("Failed to evict queues of pasid 0x%x\n", p->pasid);
+		pr_err("evict_process_worker Failed to evict queues of pasid 0x%x\n", p->pasid);
 }
 
 static int restore_process_helper(struct kfd_process *p)
@@ -2019,9 +2019,9 @@ static int restore_process_helper(struct kfd_process *p)
 
 	ret = kfd_process_restore_queues(p);
 	if (!ret)
-		pr_debug("Finished restoring pasid 0x%x\n", p->pasid);
+		pr_info("restore_process_helper Finished restoring pasid 0x%x\n", p->pasid);
 	else
-		pr_err("Failed to restore queues of pasid 0x%x\n", p->pasid);
+		pr_err("restore_process_helper Failed to restore queues of pasid 0x%x\n", p->pasid);
 
 	return ret;
 }
@@ -2038,7 +2038,7 @@ static void restore_process_worker(struct work_struct *work)
 	 * lifetime of this thread, kfd_process p will be valid
 	 */
 	p = container_of(dwork, struct kfd_process, restore_work);
-	pr_debug("Started restoring pasid 0x%x\n", p->pasid);
+	pr_info("restore_process_worker Started restoring pasid 0x%x\n", p->pasid);
 
 	/* Setting last_restore_timestamp before successful restoration.
 	 * Otherwise this would have to be set by KGD (restore_process_bos)
@@ -2054,7 +2054,7 @@ static void restore_process_worker(struct work_struct *work)
 
 	ret = restore_process_helper(p);
 	if (ret) {
-		pr_debug("Failed to restore BOs of pasid 0x%x, retry after %d ms\n",
+		pr_info("Failed to restore BOs of pasid 0x%x, retry after %d ms\n",
 			 p->pasid, PROCESS_BACK_OFF_TIME_MS);
 		if (mod_delayed_work(kfd_restore_wq, &p->restore_work,
 				     msecs_to_jiffies(PROCESS_RESTORE_TIME_MS)))
@@ -2070,7 +2070,7 @@ void kfd_suspend_all_processes(void)
 
 	WARN(debug_evictions, "Evicting all processes");
 	hash_for_each_rcu(kfd_processes_table, temp, p, kfd_processes) {
-		if (kfd_process_evict_queues(p, KFD_QUEUE_EVICTION_TRIGGER_SUSPEND))
+		if (kfd_process_evict_queues(p, KFD_QUEUE_EVICTION_TRIGGER_SUSPEND, "kfd_suspend_all_processes"))
 			pr_err("Failed to suspend process 0x%x\n", p->pasid);
 		signal_eviction_fence(p);
 	}

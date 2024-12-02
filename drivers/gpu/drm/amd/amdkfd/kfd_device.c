@@ -1104,7 +1104,7 @@ void kgd2kfd_interrupt(struct kfd_dev *kfd, const void *ih_ring_entry)
 
 }
 
-int kgd2kfd_quiesce_mm(struct mm_struct *mm, uint32_t trigger)
+int kgd2kfd_quiesce_mm(struct mm_struct *mm, uint32_t trigger, char *caller)
 {
 	struct kfd_process *p;
 	int r;
@@ -1114,17 +1114,20 @@ int kgd2kfd_quiesce_mm(struct mm_struct *mm, uint32_t trigger)
 	 * running so the lookup function increments the process ref count.
 	 */
 	p = kfd_lookup_process_by_mm(mm);
-	if (!p)
+	if (!p) {
+		pr_info("kgd2kfd_quiesce_mm called by %s, return -ESRCH", caller);
 		return -ESRCH;
+	}
 
 	WARN(debug_evictions, "Evicting pid %d", p->lead_thread->pid);
-	r = kfd_process_evict_queues(p, trigger);
+	pr_info("kgd2kfd_quiesce_mm called by %s", caller);
+	r = kfd_process_evict_queues(p, trigger, "kgd2kfd_quiesce_mm");
 
 	kfd_unref_process(p);
 	return r;
 }
 
-int kgd2kfd_resume_mm(struct mm_struct *mm)
+int kgd2kfd_resume_mm(struct mm_struct *mm, char *caller)
 {
 	struct kfd_process *p;
 	int r;
@@ -1134,9 +1137,11 @@ int kgd2kfd_resume_mm(struct mm_struct *mm)
 	 * running so the lookup function increments the process ref count.
 	 */
 	p = kfd_lookup_process_by_mm(mm);
-	if (!p)
+	if (!p) {
+		pr_info("kgd2kfd_resume_mm called by %s, return -ESRCH", caller);
 		return -ESRCH;
-
+	}
+	pr_info("kgd2kfd_resume_mm called by %s", caller);
 	r = kfd_process_restore_queues(p);
 
 	kfd_unref_process(p);

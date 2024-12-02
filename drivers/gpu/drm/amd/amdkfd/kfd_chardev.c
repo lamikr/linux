@@ -2567,7 +2567,7 @@ static int criu_restore(struct file *filep,
 	 * Set the process to evicted state to avoid running any new queues before all the memory
 	 * mappings are ready.
 	 */
-	ret = kfd_process_evict_queues(p, KFD_QUEUE_EVICTION_CRIU_RESTORE);
+	ret = kfd_process_evict_queues(p, KFD_QUEUE_EVICTION_CRIU_RESTORE, "criu_restore");
 	if (ret)
 		goto exit_unlock;
 
@@ -2686,7 +2686,7 @@ static int criu_process_info(struct file *filep,
 		goto err_unlock;
 	}
 
-	ret = kfd_process_evict_queues(p, KFD_QUEUE_EVICTION_CRIU_CHECKPOINT);
+	ret = kfd_process_evict_queues(p, KFD_QUEUE_EVICTION_CRIU_CHECKPOINT, "criu_process_info");
 	if (ret)
 		goto err_unlock;
 

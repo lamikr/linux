@@ -1868,7 +1868,7 @@ static void svm_range_restore_work(struct work_struct *work)
 
 	evicted_ranges = 0;
 
-	r = kgd2kfd_resume_mm(mm);
+	r = kgd2kfd_resume_mm(mm, "svm_range_restore_work");
 	if (r) {
 		/* No recovery from this failure. Probably the CP is
 		 * hanging. No point trying again.
@@ -1957,7 +1957,7 @@ svm_range_evict(struct svm_range *prange, struct mm_struct *mm,
 			 prange->svms, prange->start, prange->last);
 
 		/* First eviction, stop the queues */
-		r = kgd2kfd_quiesce_mm(mm, KFD_QUEUE_EVICTION_TRIGGER_SVM);
+		r = kgd2kfd_quiesce_mm(mm, KFD_QUEUE_EVICTION_TRIGGER_SVM, "svm_range_evict");
 		if (r)
 			pr_debug("failed to quiesce KFD\n");
 
@@ -2462,7 +2462,7 @@ svm_range_unmap_from_cpu(struct mm_struct *mm, struct svm_range *prange,
 
 		pr_warn("Freeing queue vital buffer 0x%lx, queue evicted\n",
 			prange->start << PAGE_SHIFT);
-		r = kgd2kfd_quiesce_mm(mm, KFD_QUEUE_EVICTION_TRIGGER_SVM);
+		r = kgd2kfd_quiesce_mm(mm, KFD_QUEUE_EVICTION_TRIGGER_SVM, "svm_range_unmap_from_cpu");
 		if (r)
 			pr_debug("failed %d to quiesce KFD queues\n", r);
 	}

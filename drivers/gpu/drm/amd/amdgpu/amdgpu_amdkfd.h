@@ -405,8 +405,8 @@ int kgd2kfd_init_zone_device(struct amdgpu_device *adev)
 #endif
 
 /* KGD2KFD callbacks */
-int kgd2kfd_quiesce_mm(struct mm_struct *mm, uint32_t trigger);
-int kgd2kfd_resume_mm(struct mm_struct *mm);
+int kgd2kfd_quiesce_mm(struct mm_struct *mm, uint32_t trigger, char *caller);
+int kgd2kfd_resume_mm(struct mm_struct *mm, char *caller);
 int kgd2kfd_schedule_evict_and_restore_process(struct mm_struct *mm,
 						struct dma_fence *fence);
 #if IS_ENABLED(CONFIG_HSA_AMD)

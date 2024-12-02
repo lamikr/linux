@@ -202,6 +202,7 @@ static int add_queue_mes(struct device_queue_manager *dqm, struct queue *q,
 	int r, queue_type;
 	uint64_t wptr_addr_off;
 
+	pr_info("add_queue_mes started\n");
 	if (!down_read_trylock(&adev->reset_domain->sem))
 		return -EIO;
 
@@ -270,6 +271,7 @@ static int remove_queue_mes(struct device_queue_manager *dqm, struct queue *q,
 	int r;
 	struct mes_remove_queue_input queue_input;
 
+	pr_info("remove_queue_mes started\n");
 	if (!down_read_trylock(&adev->reset_domain->sem))
 		return -EIO;
 
@@ -300,6 +302,7 @@ static int remove_all_queues_mes(struct device_queue_manager *dqm)
 	struct queue *q;
 	int retval = 0;
 
+	pr_info("resume_all_queues_mes started\n");
 	list_for_each_entry(cur, &dqm->queues, list) {
 		qpd = cur->qpd;
 		list_for_each_entry(q, &qpd->queues_list, list) {
@@ -324,6 +327,7 @@ static int suspend_all_queues_mes(struct device_queue_manager *dqm)
 	struct amdgpu_device *adev = (struct amdgpu_device *)dqm->dev->adev;
 	int r = 0;
 
+	pr_info("suspend_all_queues_mes started\n");
 	if (!down_read_trylock(&adev->reset_domain->sem))
 		return -EIO;
 
@@ -344,6 +348,7 @@ static int resume_all_queues_mes(struct device_queue_manager *dqm)
 	struct amdgpu_device *adev = (struct amdgpu_device *)dqm->dev->adev;
 	int r = 0;
 
+	pr_info("resume_all_queues_mes started\n");
 	if (!down_read_trylock(&adev->reset_domain->sem))
 		return -EIO;
 
@@ -368,6 +373,7 @@ static void increment_queue_count(struct device_queue_manager *dqm,
 	    q->properties.type == KFD_QUEUE_TYPE_DIQ)
 		dqm->active_cp_queue_count++;
 
+	pr_info("increment_queue_count started\n");
 	if (q->properties.is_gws) {
 		dqm->gws_queue_count++;
 		qpd->mapped_gws_queue = true;
@@ -383,6 +389,7 @@ static void decrement_queue_count(struct device_queue_manager *dqm,
 	    q->properties.type == KFD_QUEUE_TYPE_DIQ)
 		dqm->active_cp_queue_count--;
 
+	pr_info("decrement_queue_count started\n");
 	if (q->properties.is_gws) {
 		dqm->gws_queue_count--;
 		qpd->mapped_gws_queue = false;
@@ -404,12 +411,14 @@ static int allocate_doorbell(struct qcm_process_device *qpd,
 		 * preserve the user mode ABI.
 		 */
 
+		pr_info("allocate_doorbell KFD_IS_SOC15=false\n");
 		if (restore_id && *restore_id != q->properties.queue_id)
 			return -EINVAL;
 
 		q->doorbell_id = q->properties.queue_id;
 	} else if (q->properties.type == KFD_QUEUE_TYPE_SDMA ||
 			q->properties.type == KFD_QUEUE_TYPE_SDMA_XGMI) {
+		pr_info("allocate_doorbell KFD_IS_SOC15=true SDMA or SDMA_XGMI\n");
 		/* For SDMA queues on SOC15 with 8-byte doorbell, use static
 		 * doorbell assignments based on the engine and queue id.
 		 * The doobell index distance between RLC (2*i) and (2*i+1)
@@ -437,12 +446,14 @@ static int allocate_doorbell(struct qcm_process_device *qpd,
 	} else {
 		/* For CP queues on SOC15 */
 		if (restore_id) {
+			pr_info("allocate_doorbell KFD_IS_SOC15=true, not SDMA, restore id\n");
 			/* make sure that ID is free  */
 			if (__test_and_set_bit(*restore_id, qpd->doorbell_bitmap))
 				return -EINVAL;
 
 			q->doorbell_id = *restore_id;
 		} else {
+			pr_info("allocate_doorbell KFD_IS_SOC15=true, not SDMA, new id\n");
 			/* or reserve a free doorbell ID */
 			unsigned int found;
 
@@ -470,6 +481,7 @@ static void deallocate_doorbell(struct qcm_process_device *qpd,
 	unsigned int old;
 	struct kfd_node *dev = qpd->dqm->dev;
 
+	pr_info("deallocate_doorbell\n");
 	if (!KFD_IS_SOC15(dev) ||
 	    q->properties.type == KFD_QUEUE_TYPE_SDMA ||
 	    q->properties.type == KFD_QUEUE_TYPE_SDMA_XGMI)
@@ -499,6 +511,7 @@ static int allocate_vmid(struct device_queue_manager *dqm,
 	struct device *dev = dqm->dev->adev->dev;
 	int allocated_vmid = -1, i;
 
+	pr_info("allocate_wmid started\n");
 	for (i = dqm->dev->vm_info.first_vmid_kfd;
 			i <= dqm->dev->vm_info.last_vmid_kfd; i++) {
 		if (!dqm->vmid_pasid[i]) {
@@ -566,6 +579,7 @@ static void deallocate_vmid(struct device_queue_manager *dqm,
 {
 	struct device *dev = dqm->dev->adev->dev;
 
+	pr_info("deallocate_wmid\n");
 	/* On GFX v7, CP doesn't flush TC at dequeue */
 	if (q->device->adev->asic_type == CHIP_HAWAII)
 		if (flush_texture_cache_nocpsch(q->device, qpd))
@@ -590,6 +604,7 @@ static int create_queue_nocpsch(struct device_queue_manager *dqm,
 	struct mqd_manager *mqd_mgr;
 	int retval;
 
+	pr_info("create_queue_nocpsch_started\n");
 	dqm_lock(dqm);
 
 	if (dqm->total_queue_count >= max_num_of_queues_per_device) {
@@ -709,6 +724,7 @@ static int allocate_hqd(struct device_queue_manager *dqm, struct queue *q)
 
 	set = false;
 
+	pr_info("allocate_hqd_started\n");
 	for (pipe = dqm->next_pipe_to_allocate, i = 0;
 			i < get_pipes_per_mec(dqm);
 			pipe = ((pipe + 1) % get_pipes_per_mec(dqm)), ++i) {
@@ -739,6 +755,7 @@ static int allocate_hqd(struct device_queue_manager *dqm, struct queue *q)
 static inline void deallocate_hqd(struct device_queue_manager *dqm,
 				struct queue *q)
 {
+	pr_info("deallocate_hqd_started\n");
 	dqm->allocated_queues[q->pipe] |= (1 << q->queue);
 }
 
@@ -761,7 +778,7 @@ static int dbgdev_wave_reset_wavefronts(struct kfd_node *dev, struct kfd_process
 	reg_sq_cmd.u32All = 0;
 	reg_gfx_index.u32All = 0;
 
-	pr_debug("Killing all process wavefronts\n");
+	pr_info("Killing all process wavefronts\n");
 
 	if (!dev->kfd2kgd->get_atc_vmid_pasid_mapping_info) {
 		dev_err(dev->adev->dev, "no vmid pasid mapping supported\n");
@@ -819,6 +836,7 @@ static int destroy_queue_nocpsch_locked(struct device_queue_manager *dqm,
 	int retval;
 	struct mqd_manager *mqd_mgr;
 
+	pr_info("destroy_queue_nocpsch_locked started\n");
 	mqd_mgr = dqm->mqd_mgrs[get_mqd_type_from_queue_type(
 			q->properties.type)];
 
@@ -882,6 +900,7 @@ static int destroy_queue_nocpsch(struct device_queue_manager *dqm,
 	struct mqd_manager *mqd_mgr =
 		dqm->mqd_mgrs[get_mqd_type_from_queue_type(q->properties.type)];
 
+	pr_info("destroy_queue_nocpsch started\n");
 	/* Get the SDMA queue stats */
 	if ((q->properties.type == KFD_QUEUE_TYPE_SDMA) ||
 	    (q->properties.type == KFD_QUEUE_TYPE_SDMA_XGMI)) {
@@ -912,6 +931,7 @@ static int update_queue(struct device_queue_manager *dqm, struct queue *q,
 	struct kfd_process_device *pdd;
 	bool prev_active = false;
 
+	pr_info("update_queue started\n");
 	dqm_lock(dqm);
 	pdd = kfd_get_process_device_data(q->device, q->process);
 	if (!pdd) {
@@ -1026,10 +1046,12 @@ static int suspend_single_queue(struct device_queue_manager *dqm,
 {
 	bool is_new;
 
+	pr_info("suspend_single_queue started\n");
 	if (q->properties.is_suspended)
 		return 0;
 
-	pr_debug("Suspending PASID %u queue [%i]\n",
+	pr_info("%s, Suspending PASID %u queue [%i]\n",
+			__func__,
 			pdd->process->pasid,
 			q->properties.queue_id);
 
@@ -1072,6 +1094,7 @@ static int resume_single_queue(struct device_queue_manager *dqm,
 {
 	struct kfd_process_device *pdd;
 
+	pr_info("resume_single_queue started\n");
 	if (!q->properties.is_suspended)
 		return 0;
 
@@ -1106,6 +1129,7 @@ static int evict_process_queues_nocpsch(struct device_queue_manager *dqm,
 	struct kfd_process_device *pdd;
 	int retval, ret = 0;
 
+	pr_info("evict_process_queues_nocpsch started\n");
 	dqm_lock(dqm);
 	if (qpd->evicted++ > 0) /* already evicted, do nothing */
 		goto out;
@@ -1157,8 +1181,10 @@ static int evict_process_queues_cpsch(struct device_queue_manager *dqm,
 	int retval = 0;
 
 	// gfx1103 APU fails to remove the queue usually after 10-50 attempts
-	if (dqm->dev->adev->flags & AMD_IS_APU)
+	if (dqm->dev->adev->flags & AMD_IS_APU) {
+		pr_info("evict_process_queues_cpsch AMD_IS_APU\n");
 		goto out;
+	}
 	if ((dqm->dev->adev->asic_type == CHIP_NAVI10) ||
 	    (dqm->dev->adev->asic_type == CHIP_NAVI12) ||
 	    (dqm->dev->adev->asic_type == CHIP_NAVI14)) {
@@ -1226,6 +1252,7 @@ static int restore_process_queues_nocpsch(struct device_queue_manager *dqm,
 	uint64_t eviction_duration;
 	int retval, ret = 0;
 
+	pr_info("restore_process_queues_nocpsch started\n");
 	pdd = qpd_to_pdd(qpd);
 	/* Retrieve PD base */
 	pd_base = amdgpu_amdkfd_gpuvm_get_process_page_dir(pdd->drm_priv);
@@ -1305,6 +1332,7 @@ static int restore_process_queues_cpsch(struct device_queue_manager *dqm,
 	uint64_t eviction_duration;
 	int retval = 0;
 
+	pr_info("restore_process_queues_cpsch started\n");
 	// gfx1103 APU fails to remove the queue usually after 10-50 attempts
 	if (dqm->dev->adev->flags & AMD_IS_APU)
 		goto out;
@@ -1377,6 +1405,7 @@ static int register_process(struct device_queue_manager *dqm,
 	uint64_t pd_base;
 	int retval;
 
+	pr_info("register_process started\n");
 	n = kzalloc(sizeof(*n), GFP_KERNEL);
 	if (!n)
 		return -ENOMEM;
@@ -1414,6 +1443,7 @@ static int unregister_process(struct device_queue_manager *dqm,
 	int retval;
 	struct device_process_node *cur, *next;
 
+	pr_info("unregister_process started\n");
 	pr_debug("qpd->queues_list is %s\n",
 			list_empty(&qpd->queues_list) ? "empty" : "not empty");
 
