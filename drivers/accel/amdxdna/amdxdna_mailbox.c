@@ -6,7 +6,9 @@
 #include <drm/drm_device.h>
 #include <drm/drm_managed.h>
 #include <linux/bitfield.h>
+#include <linux/interrupt.h>
 #include <linux/iopoll.h>
+#include <linux/xarray.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/amdxdna.h>
@@ -54,8 +56,8 @@ struct mailbox_channel {
 	struct xdna_mailbox_chann_res	res[CHAN_RES_NUM];
 	int				msix_irq;
 	u32				iohub_int_addr;
-	struct idr			chan_idr;
-	spinlock_t			chan_idr_lock; /* protect chan_idr */
+	struct xarray			chan_xa;
+	u32				next_msgid;
 	u32				x2i_tail;
 
 	/* Received msg related fields */
@@ -96,27 +98,27 @@ struct mailbox_msg {
 static void mailbox_reg_write(struct mailbox_channel *mb_chann, u32 mbox_reg, u32 data)
 {
 	struct xdna_mailbox_res *mb_res = &mb_chann->mb->res;
-	u64 ringbuf_addr = mb_res->mbox_base + mbox_reg;
+	void __iomem *ringbuf_addr = mb_res->mbox_base + mbox_reg;
 
-	writel(data, (void *)ringbuf_addr);
+	writel(data, ringbuf_addr);
 }
 
 static u32 mailbox_reg_read(struct mailbox_channel *mb_chann, u32 mbox_reg)
 {
 	struct xdna_mailbox_res *mb_res = &mb_chann->mb->res;
-	u64 ringbuf_addr = mb_res->mbox_base + mbox_reg;
+	void __iomem *ringbuf_addr = mb_res->mbox_base + mbox_reg;
 
-	return readl((void *)ringbuf_addr);
+	return readl(ringbuf_addr);
 }
 
 static int mailbox_reg_read_non_zero(struct mailbox_channel *mb_chann, u32 mbox_reg, u32 *val)
 {
 	struct xdna_mailbox_res *mb_res = &mb_chann->mb->res;
-	u64 ringbuf_addr = mb_res->mbox_base + mbox_reg;
+	void __iomem *ringbuf_addr = mb_res->mbox_base + mbox_reg;
 	int ret, value;
 
 	/* Poll till value is not zero */
-	ret = readx_poll_timeout(readl, (void *)ringbuf_addr, value,
+	ret = readx_poll_timeout(readl, ringbuf_addr, value,
 				 value, 1 /* us */, 100);
 	if (ret < 0)
 		return ret;
@@ -164,19 +166,17 @@ static inline int mailbox_validate_msgid(int msg_id)
 
 static int mailbox_acquire_msgid(struct mailbox_channel *mb_chann, struct mailbox_msg *mb_msg)
 {
-	unsigned long flags;
-	int msg_id;
+	u32 msg_id;
+	int ret;
 
-	spin_lock_irqsave(&mb_chann->chan_idr_lock, flags);
-	msg_id = idr_alloc_cyclic(&mb_chann->chan_idr, mb_msg, 0,
-				  MAX_MSG_ID_ENTRIES, GFP_NOWAIT);
-	spin_unlock_irqrestore(&mb_chann->chan_idr_lock, flags);
-	if (msg_id < 0)
-		return msg_id;
+	ret = xa_alloc_cyclic_irq(&mb_chann->chan_xa, &msg_id, mb_msg,
+				  XA_LIMIT(0, MAX_MSG_ID_ENTRIES - 1),
+				  &mb_chann->next_msgid, GFP_NOWAIT);
+	if (ret < 0)
+		return ret;
 
 	/*
-	 * The IDR becomes less efficient when dealing with larger IDs.
-	 * Thus, add MAGIC_VAL to the higher bits.
+	 * Add MAGIC_VAL to the higher bits.
 	 */
 	msg_id |= MAGIC_VAL;
 	return msg_id;
@@ -184,34 +184,26 @@ static int mailbox_acquire_msgid(struct mailbox_channel *mb_chann, struct mailbo
 
 static void mailbox_release_msgid(struct mailbox_channel *mb_chann, int msg_id)
 {
-	unsigned long flags;
-
 	msg_id &= ~MAGIC_VAL_MASK;
-	spin_lock_irqsave(&mb_chann->chan_idr_lock, flags);
-	idr_remove(&mb_chann->chan_idr, msg_id);
-	spin_unlock_irqrestore(&mb_chann->chan_idr_lock, flags);
+	xa_erase_irq(&mb_chann->chan_xa, msg_id);
 }
 
-static int mailbox_release_msg(int id, void *p, void *data)
+static void mailbox_release_msg(struct mailbox_channel *mb_chann,
+				struct mailbox_msg *mb_msg)
 {
-	struct mailbox_channel *mb_chann = data;
-	struct mailbox_msg *mb_msg = p;
-
 	MB_DBG(mb_chann, "msg_id 0x%x msg opcode 0x%x",
 	       mb_msg->pkg.header.id, mb_msg->pkg.header.opcode);
 	mb_msg->notify_cb(mb_msg->handle, NULL, 0);
 	kfree(mb_msg);
-
-	return 0;
 }
 
 static int
 mailbox_send_msg(struct mailbox_channel *mb_chann, struct mailbox_msg *mb_msg)
 {
+	void __iomem *write_addr;
 	u32 ringbuf_size;
 	u32 head, tail;
 	u32 start_addr;
-	u64 write_addr;
 	u32 tmp_tail;
 
 	head = mailbox_get_headptr(mb_chann, CHAN_RES_X2I);
@@ -229,14 +221,14 @@ mailbox_send_msg(struct mailbox_channel *mb_chann, struct mailbox_msg *mb_msg)
 
 	if (tail >= head && tmp_tail > ringbuf_size - sizeof(u32)) {
 		write_addr = mb_chann->mb->res.ringbuf_base + start_addr + tail;
-		writel(TOMBSTONE, (void *)write_addr);
+		writel(TOMBSTONE, write_addr);
 
 		/* tombstone is set. Write from the start of the ringbuf */
 		tail = 0;
 	}
 
 	write_addr = mb_chann->mb->res.ringbuf_base + start_addr + tail;
-	memcpy_toio((void *)write_addr, &mb_msg->pkg, mb_msg->pkg_size);
+	memcpy_toio(write_addr, &mb_msg->pkg, mb_msg->pkg_size);
 	mailbox_set_tailptr(mb_chann, tail + mb_msg->pkg_size);
 
 	trace_mbox_set_tail(MAILBOX_NAME, mb_chann->msix_irq,
@@ -254,7 +246,6 @@ mailbox_get_resp(struct mailbox_channel *mb_chann, struct xdna_msg_header *heade
 		 void *data)
 {
 	struct mailbox_msg *mb_msg;
-	unsigned long flags;
 	int msg_id;
 	int ret;
 
@@ -265,15 +256,11 @@ mailbox_get_resp(struct mailbox_channel *mb_chann, struct xdna_msg_header *heade
 	}
 
 	msg_id &= ~MAGIC_VAL_MASK;
-	spin_lock_irqsave(&mb_chann->chan_idr_lock, flags);
-	mb_msg = idr_find(&mb_chann->chan_idr, msg_id);
+	mb_msg = xa_erase_irq(&mb_chann->chan_xa, msg_id);
 	if (!mb_msg) {
 		MB_ERR(mb_chann, "Cannot find msg 0x%x", msg_id);
-		spin_unlock_irqrestore(&mb_chann->chan_idr_lock, flags);
 		return -EINVAL;
 	}
-	idr_remove(&mb_chann->chan_idr, msg_id);
-	spin_unlock_irqrestore(&mb_chann->chan_idr_lock, flags);
 
 	MB_DBG(mb_chann, "opcode 0x%x size %d id 0x%x",
 	       header->opcode, header->total_size, header->id);
@@ -288,11 +275,11 @@ mailbox_get_resp(struct mailbox_channel *mb_chann, struct xdna_msg_header *heade
 static int mailbox_get_msg(struct mailbox_channel *mb_chann)
 {
 	struct xdna_msg_header header;
+	void __iomem *read_addr;
 	u32 msg_size, rest;
 	u32 ringbuf_size;
 	u32 head, tail;
 	u32 start_addr;
-	u64 read_addr;
 	int ret;
 
 	if (mailbox_reg_read_non_zero(mb_chann, mb_chann->res[CHAN_RES_I2X].mb_tail_ptr_reg, &tail))
@@ -315,7 +302,7 @@ static int mailbox_get_msg(struct mailbox_channel *mb_chann)
 
 	/* Peek size of the message or TOMBSTONE */
 	read_addr = mb_chann->mb->res.ringbuf_base + start_addr + head;
-	header.total_size = readl((void *)read_addr);
+	header.total_size = readl(read_addr);
 	/* size is TOMBSTONE, set next read from 0 */
 	if (header.total_size == TOMBSTONE) {
 		if (head < tail) {
@@ -341,7 +328,7 @@ static int mailbox_get_msg(struct mailbox_channel *mb_chann)
 
 	rest = sizeof(header) - sizeof(u32);
 	read_addr += sizeof(u32);
-	memcpy_fromio((u32 *)&header + 1, (void *)read_addr, rest);
+	memcpy_fromio((u32 *)&header + 1, read_addr, rest);
 	read_addr += rest;
 
 	ret = mailbox_get_resp(mb_chann, &header, (u32 *)read_addr);
@@ -497,8 +484,7 @@ xdna_mailbox_create_channel(struct mailbox *mb,
 	memcpy(&mb_chann->res[CHAN_RES_X2I], x2i, sizeof(*x2i));
 	memcpy(&mb_chann->res[CHAN_RES_I2X], i2x, sizeof(*i2x));
 
-	spin_lock_init(&mb_chann->chan_idr_lock);
-	idr_init(&mb_chann->chan_idr);
+	xa_init_flags(&mb_chann->chan_xa, XA_FLAGS_ALLOC | XA_FLAGS_LOCK_IRQ);
 	mb_chann->x2i_tail = mailbox_get_tailptr(mb_chann, CHAN_RES_X2I);
 	mb_chann->i2x_head = mailbox_get_headptr(mb_chann, CHAN_RES_I2X);
 
@@ -530,16 +516,18 @@ free_and_out:
 
 int xdna_mailbox_destroy_channel(struct mailbox_channel *mb_chann)
 {
-	if (!mb_chann)
-		return 0;
+	struct mailbox_msg *mb_msg;
+	unsigned long msg_id;
 
 	MB_DBG(mb_chann, "IRQ disabled and RX work cancelled");
 	free_irq(mb_chann->msix_irq, mb_chann);
 	destroy_workqueue(mb_chann->work_q);
 	/* We can clean up and release resources */
 
-	idr_for_each(&mb_chann->chan_idr, mailbox_release_msg, mb_chann);
-	idr_destroy(&mb_chann->chan_idr);
+	xa_for_each(&mb_chann->chan_xa, msg_id, mb_msg)
+		mailbox_release_msg(mb_chann, mb_msg);
+
+	xa_destroy(&mb_chann->chan_xa);
 
 	MB_DBG(mb_chann, "Mailbox channel destroyed, irq: %d", mb_chann->msix_irq);
 	kfree(mb_chann);
@@ -548,9 +536,6 @@ int xdna_mailbox_destroy_channel(struct mailbox_channel *mb_chann)
 
 void xdna_mailbox_stop_channel(struct mailbox_channel *mb_chann)
 {
-	if (!mb_chann)
-		return;
-
 	/* Disable an irq and wait. This might sleep. */
 	disable_irq(mb_chann->msix_irq);
 
